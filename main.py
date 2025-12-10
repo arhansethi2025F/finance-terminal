@@ -1,35 +1,8 @@
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Static, Input
-from textual.containers import Container, Vertical
-import yfinance as yf
-
-class QuoteDisplay(Static):
-    """Widget to display stock quotes"""
-    
-    def update_quote(self, ticker: str):
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            current_price = info.get('currentPrice', 'N/A')
-            prev_close = info.get('previousClose', 'N/A')
-            
-            if current_price != 'N/A' and prev_close != 'N/A':
-                change = current_price - prev_close
-                change_pct = (change / prev_close) * 100
-                color = "green" if change >= 0 else "red"
-                
-                quote_text = f"""
-[bold]{ticker.upper()}[/bold]
-Price: ${current_price:.2f}
-Change: [{color}]{change:+.2f} ({change_pct:+.2f}%)[/{color}]
-Previous Close: ${prev_close:.2f}
-                """
-            else:
-                quote_text = f"Could not fetch data for {ticker}"
-                
-            self.update(quote_text)
-        except Exception as e:
-            self.update(f"Error: {str(e)}")
+from textual.widgets import Header, Footer, Input, TabbedContent, TabPane
+from textual.containers import Vertical
+from quote_widget import QuoteDisplay
+from watchlist_widget import WatchlistTable
 
 class FinanceTerminal(App):
     """A simple finance terminal"""
@@ -46,29 +19,78 @@ class FinanceTerminal(App):
         margin: 1;
     }
     
-    #ticker-input {
+    .input-container {
         margin: 1;
+    }
+    
+    DataTable {
+        height: 100%;
     }
     """
     
     BINDINGS = [
         ("q", "quit", "Quit"),
+        ("r", "refresh", "Refresh"),
     ]
     
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Vertical(
-            Input(placeholder="Enter ticker symbol (e.g., AAPL)", id="ticker-input"),
-            QuoteDisplay("Enter a ticker symbol to get started", id="quote-display"),
-        )
+        
+        with TabbedContent():
+            with TabPane("Quote", id="quote-tab"):
+                yield Vertical(
+                    Input(placeholder="Enter ticker symbol (e.g., AAPL)", id="ticker-input", classes="input-container"),
+                    QuoteDisplay("Enter a ticker symbol to get started", id="quote-display"),
+                )
+            
+            with TabPane("Watchlist", id="watchlist-tab"):
+                yield Vertical(
+                    Input(placeholder="Enter ticker to add to watchlist", id="watchlist-input", classes="input-container"),
+                    WatchlistTable(id="watchlist-table"),
+                )
+        
         yield Footer()
+    
+    def on_mount(self) -> None:
+        """Set up auto-refresh timer when app starts"""
+        # Update every 2 seconds
+        self.set_interval(2, self.auto_refresh)
+    
+    def auto_refresh(self) -> None:
+        """Automatically refresh the quote and watchlist"""
+        try:
+            # Refresh single quote
+            quote_display = self.query_one("#quote-display", QuoteDisplay)
+            quote_display.refresh_current_ticker()
+            
+            # Refresh watchlist
+            watchlist_table = self.query_one("#watchlist-table", WatchlistTable)
+            watchlist_table.refresh_watchlist()
+        except Exception as e:
+            # Handle any errors gracefully
+            pass
+    
+    def action_refresh(self) -> None:
+        """Manual refresh action (when user presses 'r')"""
+        self.auto_refresh()
     
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle ticker input"""
         ticker = event.value.strip().upper()
-        if ticker:
+        
+        if not ticker:
+            return
+        
+        if event.input.id == "ticker-input":
+            # Single quote view
             quote_display = self.query_one("#quote-display", QuoteDisplay)
             quote_display.update_quote(ticker)
+        
+        elif event.input.id == "watchlist-input":
+            # Watchlist view
+            watchlist_table = self.query_one("#watchlist-table", WatchlistTable)
+            watchlist_table.add_ticker(ticker)
+            event.input.value = ""  # Clear input after adding
 
 if __name__ == "__main__":
     app = FinanceTerminal()
